@@ -15,6 +15,7 @@ tags:
   - data-processing
 series:
   - xenial
+  - bionic
 subordinate: false
 provides:
   client:
