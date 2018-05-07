@@ -1,7 +1,10 @@
 includes:
   - "layer:basic"
-  - "interface:java"
+  - "layer:elastic-base"
   - "interface:elasticsearch"
   - "interface:logstash-client"
   - "interface:elastic-beats"
+options:
+  elastic-base:
+    elastic-pkg: "logstash"
 repo: https://github.com/juju-solutions/layer-logstash

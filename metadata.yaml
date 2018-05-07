@@ -10,13 +10,14 @@ maintainers:
 summary: |
   Logstash helps you process logs and other event data.
 tags:
+  - elastic
   - logging
   - data-processing
+series:
+  - xenial
+  - bionic
 subordinate: false
 provides:
-  java:
-    interface: java
-    scope: container
   client:
     interface: logstash-client
   beat:

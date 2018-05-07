@@ -1,12 +1,4 @@
 options:
-  install_sources:
-    type: string
-    default: deb http://packages.elastic.co/logstash/2.2/debian stable main
-    description: APT repository to fetch logstash from
-  install_keys:
-    type: string
-    default: D88E42B4
-    description: repository key
   udp_port:
     type: int
     default: 5000
