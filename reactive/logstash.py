@@ -1,97 +1,130 @@
-from charms.reactive import set_flag
-from charms.reactive import clear_flag
-from charms.reactive import when
-from charms.reactive import when_any
-from charms.reactive import context
-from charms.reactive import when_not
-from charms.reactive import when_file_changed
+from pathlib import Path
+
+from charms.reactive import (
+    clear_flag,
+    endpoint_from_flag,
+    is_flag_set,
+    set_flag,
+    clear_flag,
+    when,
+    when_any,
+    when_file_changed,
+    when_not,
+)
+
 from charmhelpers.core.hookenv import (
     application_version_set,
     config,
     status_set
 )
-from charmhelpers.core import host
+
+from charmhelpers.core.host import service_restart
 from charmhelpers.core.templating import render
-from charmhelpers.core.unitdata import kv
 
 from charms.layer.logstash import logstash_version
 
 
-CONF_DIR = "/etc/logstash/conf.d"
-
-
-@when('endpoint.elasticsearch.host-port')
-def trigger_logstash_service_recycle():
-    clear_flag('logstash.elasticsearch.configured')
-
-
-@when_any('apt.installed.logstash',
-          'deb.installed.logstash')
-@when_not('logstash.elasticsearch.configured')
-def get_all_elasticsearch_nodes_or_all_master_nodes():
-    cache = kv()
-    if cache.get('logstash.elasticsearch', ''):
-        hosts = cache.get('logstash.elasticsearch')
-    else:
-        hosts = []
-
-    nodes = context.endpoints.elasticsearch.relation_data()
-    for unit in nodes:
-        host_string = "{0}:{1}".format(unit['host'], unit['port'])
-        if host_string not in hosts:
-            hosts.append(host_string)
-
-    cache.set('logstash.elasticsearch', hosts)
-    set_flag('logstash.render')
-    set_flag('logstash.elasticsearch.configured')
-
-
-@when_file_changed('/etc/logstash/conf.d/legacy.conf',
-                   '/etc/logstash/conf.d/beats.conf')
-def recycle_logstash_service():
-    host.service_restart('logstash')
+CONF_DIR = Path("/etc/logstash/conf.d")
+LEGACY_CONF = CONF_DIR / "legacy.conf"
+BEATS_CONF = CONF_DIR / "beats.conf"
 
 
 @when_any('apt.installed.logstash',
           'deb.installed.logstash')
 @when_not('logstash.version.available')
-def set_logstash_version_in_unit_data():
-    ls_version = logstash_version()
-    application_version_set(ls_version)
-    status_set('active',
-               'Logstash running - version {}'.format(ls_version))
+def set_logstash_version():
+    application_version_set(logstash_version())
     set_flag('logstash.version.available')
 
 
-@when('logstash.render')
-def config_changed():
-    render_without_context('beats.conf', '{}/beats.conf'.format(CONF_DIR))
-    render_without_context('legacy.conf', '{}/legacy.conf'.format(CONF_DIR))
-    clear_flag('logstash.render')
+@when_any('apt.installed.logstash',
+          'deb.installed.logstash')
+@when_not('logstash.legacy.conf.available')
+def render_logstash_conf():
+    """Create context and render legacy conf.
+    """
+
+    ctxt = {
+        'es_nodes': [],
+        'udp_port': config('udp_port'),
+        'tcp_port': config('tcp_port'),
+    }
+
+    if is_flag_set('endpoint.elasticsearch.available'):
+        endpoint = endpoint_from_flag('endpoint.elasticsearch.available')
+        [ctxt['es_nodes'].append("{}:{}".format(unit['host'], unit['port']))
+         for unit in endpoint.relation_data()]
+
+    if LEGACY_CONF.exists():
+        LEGACY_CONF.unlink()
+
+    render('legacy.conf', str(LEGACY_CONF), ctxt)
+
+    set_flag('logstash.legacy.conf.available')
+
+
+@when_any('apt.installed.logstash',
+          'deb.installed.logstash')
+@when_not('logstash.beats.conf.available')
+def render_beat_conf():
+    """Create context and render beat conf.
+    """
+
+    ctxt = {
+        'es_nodes': [],
+        'beats_port': config('beats_port'),
+    }
+
+    if is_flag_set('endpoint.elasticsearch.available'):
+        endpoint = endpoint_from_flag('endpoint.elasticsearch.available')
+        [ctxt['es_nodes'].append("{}:{}".format(unit['host'], unit['port']))
+         for unit in endpoint.relation_data()]
+
+    if BEATS_CONF.exists():
+        BEATS_CONF.unlink()
+
+    render('beats.conf', str(BEATS_CONF), ctxt)
+
+    set_flag('logstash.beats.conf.available')
+
+
+@when('endpoint.elasticsearch.available')
+def es_available_rerender_confs():
+    clear_flag('logstash.beats.conf.available')
+    clear_flag('logstash.legacy.conf.available')
+
+
+@when_not('endpoint.elasticsearch.available')
+def es_not_available_rerender_confs():
+    clear_flag('logstash.beats.conf.available')
+    clear_flag('logstash.legacy.conf.available')
+
+
+@when_file_changed('/etc/logstash/conf.d/legacy.conf',
+                   '/etc/logstash/conf.d/beats.conf')
+def recycle_logstash_service():
+    service_restart('logstash')
+
+
+@when_any('apt.installed.logstash',
+          'deb.installed.logstash')
+@when('logstash.version.available')
+def set_logstash_version_in_unit_data():
+    status_set('active',
+               'Logstash running - version {}'.format(logstash_version()))
 
 
 @when('client.connected')
-def configure_logstash_input(client):
+def configure_logstash_input():
     '''Configure the legacy logstash clients.'''
+    endpoint = endpoint_from_flag('client.connected')
     # Send the port data to the clients.
-    client.provide_data(config('tcp_port'), config('udp_port'))
-    set_flag('logstash.render')
+    endpoint.provide_data(config('tcp_port'), config('udp_port'))
 
 
 @when('beat.connected')
-def configure_filebeat_input(filebeat):
+def configure_filebeat_input():
     '''Configure the logstash beat clients.'''
-    filebeat.provide_data(config('beats_port'))
-    set_flag('logstash.render')
-
-
-def render_without_context(source, target):
-    ''' Convenience method to re-render a target template with cached data.
-        Useful during config-changed cycles without needing to re-iterate The
-        relationship interfaces. '''
-    context = config()
-    cache = kv()
-    esearch = cache.get('logstash.elasticsearch')
-    if esearch:
-        context.update({'elasticsearch': ', '.join(esearch)})
-    render(source, target, context)
+    endpoint = endpoint_from_flag('beat.connected')
+    endpoint.provide_data(config('beats_port'))
+    clear_flag('logstash.beats.conf.available')
