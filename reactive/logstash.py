@@ -29,16 +29,14 @@ LEGACY_CONF = CONF_DIR / "legacy.conf"
 BEATS_CONF = CONF_DIR / "beats.conf"
 
 
-@when_any('apt.installed.logstash',
-          'deb.installed.logstash')
+@when('elastic.base.available')
 @when_not('logstash.version.available')
 def set_logstash_version():
     application_version_set(logstash_version())
     set_flag('logstash.version.available')
 
 
-@when_any('apt.installed.logstash',
-          'deb.installed.logstash')
+@when('elastic.base.available')
 @when_not('logstash.legacy.conf.available')
 def render_logstash_conf():
     """Create context and render legacy conf.
@@ -53,7 +51,7 @@ def render_logstash_conf():
     if is_flag_set('endpoint.elasticsearch.available'):
         endpoint = endpoint_from_flag('endpoint.elasticsearch.available')
         [ctxt['es_nodes'].append("{}:{}".format(unit['host'], unit['port']))
-         for unit in endpoint.relation_data()]
+         for unit in endpoint.list_unit_data()]
 
     if LEGACY_CONF.exists():
         LEGACY_CONF.unlink()
@@ -63,8 +61,7 @@ def render_logstash_conf():
     set_flag('logstash.legacy.conf.available')
 
 
-@when_any('apt.installed.logstash',
-          'deb.installed.logstash')
+@when('elastic.base.available')
 @when_not('logstash.beats.conf.available')
 def render_beat_conf():
     """Create context and render beat conf.
@@ -78,7 +75,7 @@ def render_beat_conf():
     if is_flag_set('endpoint.elasticsearch.available'):
         endpoint = endpoint_from_flag('endpoint.elasticsearch.available')
         [ctxt['es_nodes'].append("{}:{}".format(unit['host'], unit['port']))
-         for unit in endpoint.relation_data()]
+         for unit in endpoint.list_unit_data()]
 
     if BEATS_CONF.exists():
         BEATS_CONF.unlink()
@@ -106,9 +103,8 @@ def recycle_logstash_service():
     service_restart('logstash')
 
 
-@when_any('apt.installed.logstash',
-          'deb.installed.logstash')
-@when('logstash.version.available')
+@when('logstash.version.available',
+      'elastic.base.available')
 def set_logstash_version_in_unit_data():
     status_set('active',
                'Logstash running - version {}'.format(logstash_version()))
